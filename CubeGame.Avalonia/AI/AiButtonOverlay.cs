@@ -6,98 +6,110 @@ using Avalonia.Media;
 namespace CubeGame.Avalonia.AI;
 
 /// <summary>
-/// 우하단 AI 패널 렌더링 + 히트 테스트.
+/// 우하단 AI 패널 — 두 패널로 분리:
 ///
-/// 패널 레이아웃 (패널 좌상단 기준 상대 좌표):
-///   y=  8 : [🤖 AI 풀기 버튼]  [⛔ 중지 버튼]
-///   y= 52 : [☑] 기록 역재생으로 풀기
-///   y= 76 : ─── 구분선 ───
-///   y= 80 : 📤 요청:
-///   y= 94 : 요청 텍스트 (최대 2줄)
-///   y=122 : ─── 구분선 ───
-///   y=126 : 📥 응답:
-///   y=140 : 응답 텍스트 (최대 2줄)
-///   패널 높이 = 176
+/// ┌─────────────────────────────────┐  ← Panel B: AI 로그 (요청/응답)
+/// │ 📤 요청:                         │  Height: 200px, 요청 3줄 + 응답 6줄
+/// │ (cube state text...)             │
+/// │ ─────────────────────────────── │
+/// │ 📥 응답:                         │
+/// │ (pipeline progress / result...)  │
+/// └─────────────────────────────────┘
+///   [8px gap]
+/// ┌─────────────────────────────────┐  ← Panel A: AI 제어 (버튼+체크+단계표시)
+/// │ [🤖 AI 풀기]  [⛔ 풀이 중지]    │  Height: 120px
+/// │ [☑] 기록 역재생으로 풀기         │
+/// │ ─── 단계 표시바 (AI모드) ───    │
+/// └─────────────────────────────────┘
 /// </summary>
 public static class AiButtonOverlay
 {
-    // ── 히트 결과 열거형 ─────────────────────────────────────────────
-    public enum Hit { None, AiButton, StopButton, Checkbox }
+    // ── 히트 결과 ────────────────────────────────────────────────────
+    public enum Hit { None, AiButton, StopButton, Checkbox, CopyRequest, CopyResponse }
 
-    // ── 패널/버튼 영역 계산 ─────────────────────────────────────────
-    private static Rect Panel(int w, int h)      => new(w - 296, h - 194, 284, 176);
-    private static Rect AiBtn(int w, int h)      => new(Panel(w, h).X +   8, Panel(w, h).Y +  8, 126, 36);
-    private static Rect StopBtn(int w, int h)    => new(Panel(w, h).X + 142, Panel(w, h).Y +  8, 134, 36);
-    private static Rect CheckboxBox(int w, int h) => new(Panel(w, h).X +   8, Panel(w, h).Y + 52,  18, 18);
+    // ── 패널 좌표 ────────────────────────────────────────────────────
+    /// Panel A: AI 제어 (버튼+체크박스+단계표시)
+    private static Rect PanelA(int w, int h) => new(w - 268, h - 176, 256, 122);
+    /// Panel B: AI 로그 (요청+응답)
+    private static Rect PanelB(int w, int h) => new(w - 268, h - 386, 256, 202);
+
+    // Panel A 내 요소
+    private static Rect AiBtn(int w, int h)       => new(PanelA(w,h).X +   6, PanelA(w,h).Y +  6, 116, 34);
+    private static Rect StopBtn(int w, int h)     => new(PanelA(w,h).X + 126, PanelA(w,h).Y +  6, 126, 34);
+    private static Rect CheckboxBox(int w, int h) => new(PanelA(w,h).X +   6, PanelA(w,h).Y + 48,  18, 18);
+
+    // Panel B 내 복사 버튼 (헤더 우측 끝에 배치)
+    private static Rect CopyReqBtn(int w, int h)  => new(PanelB(w,h).Right - 42, PanelB(w,h).Y +  5, 36, 18);
+    private static Rect CopyRespBtn(int w, int h) => new(PanelB(w,h).Right - 42, PanelB(w,h).Y + 71, 36, 18);
 
     // ── 히트 테스트 ─────────────────────────────────────────────────
     public static Hit TryHit(Point point, int w, int h)
     {
-        if (AiBtn(w, h).Contains(point))      return Hit.AiButton;
-        if (StopBtn(w, h).Contains(point))    return Hit.StopButton;
-        if (CheckboxBox(w, h).Contains(point)) return Hit.Checkbox;
+        if (AiBtn(w, h).Contains(point))        return Hit.AiButton;
+        if (StopBtn(w, h).Contains(point))      return Hit.StopButton;
+        if (CheckboxBox(w, h).Contains(point))  return Hit.Checkbox;
+        if (CopyReqBtn(w, h).Contains(point))   return Hit.CopyRequest;
+        if (CopyRespBtn(w, h).Contains(point))  return Hit.CopyResponse;
         return Hit.None;
     }
 
-    // ── 전체 패널 렌더링 ────────────────────────────────────────────
+    // ── 전체 그리기 진입점 ──────────────────────────────────────────
     public static void Draw(DrawingContext dc, int w, int h, SolveController solver)
     {
-        var p = Panel(w, h);
-
-        DrawPanelBackground(dc, p);
-        DrawAiButton(dc,   AiBtn(w, h),      solver.IsRunning);
-        DrawStopButton(dc, StopBtn(w, h),    solver.IsRunning);
-        DrawCheckbox(dc,   CheckboxBox(w, h), solver.UseHistoryMode, p);
-        DrawDivider(dc, p, relY: 76);
-        DrawLogSection(dc, p, "📤 요청:", solver.LastRequest,  relY: 80);
-        DrawDivider(dc, p, relY: 122);
-        DrawLogSection(dc, p, "📥 응답:", solver.LastResponse, relY: 126);
+        DrawPanelA(dc, w, h, solver);
+        DrawPanelB(dc, w, h, solver);
     }
 
-    // ── 패널 배경 ───────────────────────────────────────────────────
-    private static void DrawPanelBackground(DrawingContext dc, Rect p)
+    // ════════════════════════════════════════════════════════════════
+    // Panel A: AI 제어 — 버튼, 체크박스, 단계 표시바
+    // ════════════════════════════════════════════════════════════════
+    private static void DrawPanelA(DrawingContext dc, int w, int h, SolveController solver)
     {
-        dc.DrawRectangle(
-            new SolidColorBrush(Color.FromArgb(210, 12, 14, 26)),
-            new Pen(new SolidColorBrush(Color.FromArgb(180, 60, 100, 200)), 1.5),
-            p, 10, 10);
+        var p = PanelA(w, h);
+        DrawPanelBg(dc, p, Color.FromArgb(215, 10, 12, 24), Color.FromArgb(180, 60, 100, 200));
+
+        DrawAiButton(dc,   AiBtn(w, h),       solver.IsRunning);
+        DrawStopButton(dc, StopBtn(w, h),     solver.IsRunning);
+        DrawCheckbox(dc,   CheckboxBox(w, h), solver.UseHistoryMode, p);
+
+        // 단계 표시바 (AI 직접 모드일 때)
+        if (!solver.UseHistoryMode)
+        {
+            DrawDivider(dc, p, relY: 68);
+            DrawPipelineSteps(dc, p, solver.Step, solver.Attempt, relY: 74);
+        }
     }
 
     // ── AI 풀기 버튼 ────────────────────────────────────────────────
     private static void DrawAiButton(DrawingContext dc, Rect r, bool running)
     {
-        var fill   = running ? Color.FromRgb(20, 130, 75) : Color.FromRgb(28, 75, 165);
-        var border = running ? Colors.LimeGreen            : Color.FromRgb(70, 150, 255);
+        var fill   = running ? Color.FromRgb(20, 130, 75)  : Color.FromRgb(28, 75, 165);
+        var border = running ? Colors.LimeGreen              : Color.FromRgb(70, 150, 255);
         dc.DrawRectangle(new SolidColorBrush(fill),
             new Pen(new SolidColorBrush(border), 1.8), r, 8, 8);
-        var label = running ? "⏳ AI 풀이 중..." : "🤖 AI 풀기";
-        DrawCenteredText(dc, r, label, 14);
+        DrawCenteredText(dc, r, running ? "⏳ AI 풀이 중..." : "🤖 AI 풀기", 13.5f);
     }
 
     // ── 중지 버튼 ───────────────────────────────────────────────────
     private static void DrawStopButton(DrawingContext dc, Rect r, bool running)
     {
-        // 활성 = 빨강, 비활성 = 어두운 회색
-        var fill   = running ? Color.FromRgb(170, 30, 30) : Color.FromRgb(40, 40, 50);
-        var border = running ? Colors.OrangeRed             : Color.FromRgb(80, 80, 90);
-        var text   = running ? "⛔ 풀이 중지" : "⛔ 중지";
+        var fill      = running ? Color.FromRgb(170, 30, 30) : Color.FromRgb(40, 40, 50);
+        var border    = running ? Colors.OrangeRed             : Color.FromRgb(80, 80, 90);
+        var text      = running ? "⛔ 풀이 중지" : "⛔ 중지";
         var textColor = running ? Colors.White : Color.FromRgb(120, 120, 130);
-
         dc.DrawRectangle(new SolidColorBrush(fill),
             new Pen(new SolidColorBrush(border), 1.5), r, 8, 8);
-        DrawCenteredText(dc, r, text, 14, textColor);
+        DrawCenteredText(dc, r, text, 13.5f, textColor);
     }
 
-    // ── 체크박스 + 레이블 ───────────────────────────────────────────
+    // ── 체크박스 ────────────────────────────────────────────────────
     private static void DrawCheckbox(DrawingContext dc, Rect box, bool isChecked, Rect panel)
     {
-        // 박스 배경
         var fill   = isChecked ? Color.FromRgb(28, 95, 180) : Color.FromRgb(30, 32, 45);
         var border = isChecked ? Colors.CornflowerBlue       : Color.FromRgb(90, 95, 115);
         dc.DrawRectangle(new SolidColorBrush(fill),
             new Pen(new SolidColorBrush(border), 1.5), box, 3, 3);
 
-        // 체크 표시
         if (isChecked)
         {
             var tick = new Pen(new SolidColorBrush(Colors.White), 2.2) { LineCap = PenLineCap.Round };
@@ -105,15 +117,168 @@ public static class AiButtonOverlay
             dc.DrawLine(tick, new Point(box.X + 8, box.Y + 14), new Point(box.X + 15, box.Y + 4));
         }
 
-        // 레이블
-        var modeText = isChecked ? "기록 역재생으로 풀기" : "AI에게 직접 풀이 요청";
+        var modeText   = isChecked ? "기록 역재생으로 풀기" : "AI에게 직접 풀이 요청";
         var labelColor = isChecked
             ? Color.FromArgb(230, 180, 210, 255)
             : Color.FromArgb(200, 130, 170, 255);
-        DrawSmallText(dc, modeText, panel.X + 32, box.Y + 1, labelColor, 11.5f);
+        DrawSmallText(dc, modeText, panel.X + 30, box.Y + 1, labelColor, 11.5f);
     }
 
-    // ── 구분선 ──────────────────────────────────────────────────────
+    // ── 파이프라인 단계 표시바 ──────────────────────────────────────
+    private static void DrawPipelineSteps(
+        DrawingContext dc, Rect panel, PipelineStep currentStep, int attempt, double relY)
+    {
+        double x0    = panel.X + 6;
+        double y0    = panel.Y + relY;
+        double stepW = (panel.Width - 12) / 4.0;
+
+        var steps = new[]
+        {
+            ("1.분석",  PipelineStep.Analysis),
+            ("2.수식",  PipelineStep.MovesGen),
+            ("3.검증",  PipelineStep.Verifying),
+            ("4.실행",  PipelineStep.Executing),
+        };
+
+        for (int i = 0; i < steps.Length; i++)
+        {
+            var (label, step) = steps[i];
+            double cx = x0 + stepW * i + stepW * 0.5;
+
+            bool isDone   = IsStepDone(step, currentStep);
+            bool isActive = step == currentStep;
+            bool isFailed = currentStep == PipelineStep.Failed && isActive;
+
+            Color circleColor, textColor;
+            if (isFailed)
+            { circleColor = Color.FromRgb(200, 40, 40); textColor = Color.FromRgb(255, 120, 120); }
+            else if (isActive)
+            { circleColor = Color.FromRgb(255, 185, 0); textColor = Color.FromRgb(255, 235, 80); }
+            else if (isDone)
+            { circleColor = Color.FromRgb(30, 185, 90);  textColor = Color.FromRgb(100, 240, 140); }
+            else
+            { circleColor = Color.FromRgb(45, 50, 70);   textColor = Color.FromRgb(100, 110, 140); }
+
+            // 연결선
+            if (i < steps.Length - 1)
+            {
+                double lx0 = cx + 10;
+                double lx1 = x0 + stepW * (i + 1) + stepW * 0.5 - 10;
+                dc.DrawLine(
+                    new Pen(new SolidColorBrush(isDone
+                        ? Color.FromArgb(150, 30, 185, 90)
+                        : Color.FromArgb(70, 80, 90, 120)), 1.5),
+                    new Point(lx0, y0 + 7), new Point(lx1, y0 + 7));
+            }
+
+            // 원
+            dc.DrawEllipse(
+                new SolidColorBrush(circleColor),
+                new Pen(new SolidColorBrush(Color.FromArgb(isActive ? (byte)220 : (byte)120, 255, 255, 255)),
+                        isActive ? 1.5 : 0.8),
+                new Point(cx, y0 + 7), 8, 8);
+
+            // 완료 체크
+            if (isDone && currentStep != PipelineStep.Failed)
+            {
+                var pen = new Pen(new SolidColorBrush(Colors.White), 1.8) { LineCap = PenLineCap.Round };
+                dc.DrawLine(pen, new Point(cx - 4, y0 + 7), new Point(cx - 1, y0 + 11));
+                dc.DrawLine(pen, new Point(cx - 1, y0 + 11), new Point(cx + 5, y0 + 3));
+            }
+
+            // 레이블
+            DrawSmallText(dc, label, cx - 13, y0 + 18, textColor, 9f);
+
+            // 재시도 번호
+            if (isActive && step == PipelineStep.MovesGen && attempt > 0)
+                DrawSmallText(dc, $"({attempt}/{SolveController.MaxAttempts})",
+                    cx - 11, y0 + 29, Color.FromArgb(200, 255, 210, 80), 8f);
+        }
+    }
+
+    private static bool IsStepDone(PipelineStep step, PipelineStep current)
+    {
+        static int Idx(PipelineStep s) => s switch
+        {
+            PipelineStep.Analysis  => 0,
+            PipelineStep.MovesGen  => 1,
+            PipelineStep.Verifying => 2,
+            PipelineStep.Executing => 3,
+            PipelineStep.Done      => 4,
+            PipelineStep.Failed    => 4,
+            _                      => -1
+        };
+        return Idx(step) < Idx(current);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Panel B: AI 로그 — 요청 + 응답 (각각 더 많은 줄)
+    // ════════════════════════════════════════════════════════════════
+    private static void DrawPanelB(DrawingContext dc, int w, int h, SolveController solver)
+    {
+        var p = PanelB(w, h);
+        DrawPanelBg(dc, p, Color.FromArgb(200, 8, 11, 22), Color.FromArgb(140, 50, 80, 170));
+
+        // ── 📤 요청 (3줄) + 복사 버튼 ──────────────────────────────
+        DrawSmallText(dc, "📤 요청:", p.X + 8, p.Y + 8,
+            Color.FromArgb(220, 120, 190, 255), 11f, bold: true);
+        DrawCopyBtn(dc, CopyReqBtn(w, h), !string.IsNullOrEmpty(solver.LastRequest));
+        DrawLogLines(dc, p, solver.LastRequest, relY: 24, maxLines: 3);
+
+        DrawDivider(dc, p, relY: 68);
+
+        // ── 📥 응답 (6줄) + 복사 버튼 ──────────────────────────────
+        DrawSmallText(dc, "📥 응답:", p.X + 8, p.Y + 74,
+            Color.FromArgb(220, 120, 190, 255), 11f, bold: true);
+        DrawCopyBtn(dc, CopyRespBtn(w, h), !string.IsNullOrEmpty(solver.LastResponse));
+        DrawLogLines(dc, p, solver.LastResponse, relY: 90, maxLines: 6);
+    }
+
+    // ── 📋 복사 버튼 ────────────────────────────────────────────────
+    private static void DrawCopyBtn(DrawingContext dc, Rect r, bool hasContent)
+    {
+        // 내용이 없으면 흐리게, 있으면 밝게
+        var fillAlpha   = (byte)(hasContent ? 140 : 50);
+        var borderAlpha = (byte)(hasContent ? 180 : 70);
+        var textAlpha   = (byte)(hasContent ? 230 : 100);
+
+        dc.DrawRectangle(
+            new SolidColorBrush(Color.FromArgb(fillAlpha, 40, 80, 140)),
+            new Pen(new SolidColorBrush(Color.FromArgb(borderAlpha, 100, 160, 240)), 1),
+            r, 4, 4);
+
+        var ft = new FormattedText("📋 복사", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Normal),
+            9, new SolidColorBrush(Color.FromArgb(textAlpha, 180, 220, 255)));
+        dc.DrawText(ft, new Point(
+            r.X + (r.Width  - ft.Width)  / 2,
+            r.Y + (r.Height - ft.Height) / 2));
+    }
+
+    // ── 공통: 여러 줄 텍스트 그리기 ────────────────────────────────
+    private static void DrawLogLines(
+        DrawingContext dc, Rect panel, string text, double relY, int maxLines)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        var lines = WrapText(text, 38);
+        for (int i = 0; i < Math.Min(lines.Length, maxLines); i++)
+        {
+            DrawSmallText(dc, lines[i],
+                panel.X + 10, panel.Y + relY + i * 13,
+                Color.FromArgb(210, 200, 215, 240), 10.5f);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // 공통 그리기 헬퍼
+    // ════════════════════════════════════════════════════════════════
+    private static void DrawPanelBg(DrawingContext dc, Rect p, Color fill, Color border)
+    {
+        dc.DrawRectangle(new SolidColorBrush(fill),
+            new Pen(new SolidColorBrush(border), 1.5), p, 10, 10);
+    }
+
     private static void DrawDivider(DrawingContext dc, Rect panel, double relY)
     {
         var y = panel.Y + relY;
@@ -122,30 +287,8 @@ public static class AiButtonOverlay
             new Point(panel.X + 8, y), new Point(panel.Right - 8, y));
     }
 
-    // ── 요청/응답 섹션 ──────────────────────────────────────────────
-    private static void DrawLogSection(
-        DrawingContext dc, Rect panel, string header, string text, double relY)
-    {
-        // 섹션 헤더 ("📤 요청:" / "📥 응답:")
-        DrawSmallText(dc, header,
-            panel.X + 8, panel.Y + relY,
-            Color.FromArgb(220, 120, 190, 255), 11f, bold: true);
-
-        // 본문 (최대 2줄, 각 줄 최대 ~34자)
-        if (string.IsNullOrEmpty(text)) return;
-        var lines = WrapText(text, 34);
-        for (int i = 0; i < Math.Min(lines.Length, 2); i++)
-        {
-            DrawSmallText(dc, lines[i],
-                panel.X + 10, panel.Y + relY + 14 + i * 13,
-                Color.FromArgb(200, 200, 215, 240), 10.5f);
-        }
-    }
-
-    // ── 공통 텍스트 헬퍼 ────────────────────────────────────────────
     private static void DrawCenteredText(
-        DrawingContext dc, Rect rect, string text, float size,
-        Color? color = null)
+        DrawingContext dc, Rect rect, string text, float size, Color? color = null)
     {
         var brush = new SolidColorBrush(color ?? Colors.White);
         var font  = new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Bold);
@@ -168,29 +311,33 @@ public static class AiButtonOverlay
         dc.DrawText(ft, new Point(x, y));
     }
 
-    // ── 텍스트 줄 나누기 (단어/문자 경계) ───────────────────────────
+    // ── 텍스트 줄 나누기 (개행 → 최대 38자) ────────────────────────
     private static string[] WrapText(string text, int maxChars)
     {
-        // 개행 정규화
         text = text.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        var rawLines = text.Split('\n');
+        var result   = new System.Collections.Generic.List<string>();
 
-        // 첫 번째 개행이 있으면 그 위치로 분리
-        var newlineIdx = text.IndexOf('\n');
-        if (newlineIdx >= 0 && newlineIdx <= maxChars)
+        foreach (var raw in rawLines)
         {
-            var first  = text[..newlineIdx].Trim();
-            var second = text[(newlineIdx + 1)..].Replace('\n', ' ').Trim();
-            return [first, Truncate(second, maxChars)];
+            var line = raw.Trim();
+            if (line.Length == 0)        { result.Add(""); continue; }
+            if (line.Length <= maxChars) { result.Add(line); continue; }
+
+            int pos = 0;
+            while (pos < line.Length)
+            {
+                int end = Math.Min(pos + maxChars, line.Length);
+                if (end < line.Length)
+                {
+                    int sp = line.LastIndexOf(' ', end - 1, end - pos);
+                    if (sp > pos) end = sp + 1;
+                }
+                result.Add(line[pos..end].TrimEnd());
+                pos = end;
+                while (pos < line.Length && line[pos] == ' ') pos++;
+            }
         }
-
-        if (text.Length <= maxChars) return [text];
-
-        // maxChars 이내 마지막 공백에서 분리
-        var cut = text.LastIndexOf(' ', maxChars - 1);
-        if (cut < 0) cut = maxChars;
-        return [text[..cut].TrimEnd(), Truncate(text[cut..].TrimStart(), maxChars)];
+        return [.. result];
     }
-
-    private static string Truncate(string s, int max)
-        => s.Length <= max ? s : s[..(max - 1)] + "…";
 }

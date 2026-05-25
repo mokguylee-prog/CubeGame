@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CubeGame.Avalonia.AI;
@@ -22,18 +25,54 @@ public partial class MainWindow : Window
     private readonly Overlay _overlay = new();
     private readonly SolveController _solver = new();   // ← AI 풀기 전담
     private LayerTurnAnimation? _turn;
+    private Queue<(LayerAxis Axis, int Layer, bool Clockwise)>? _scrambleQueue;
+    private static readonly Random Rng = new();
+
+    // ── 솔루션 직접 입력 — 네이티브 TextBox ──────────────────────────
+    private TextBox? _solutionBox;
 
     public MainWindow()
     {
         InitializeComponent();
         Title = "3D Cube Game Simulator";
         Width = 800; Height = 640;
-        MinWidth = 600; MinHeight = 480;
+        MinWidth = 700; MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = null;
 
         CubeStateStore.Load(_cube, _renderer);
-        Content = new CubeView(this);
+
+        // ── 레이아웃: Grid (CubeView 전체 + TextBox 오버레이) ─────────
+        var cubeView = new CubeView(this);
+
+        _solutionBox = new TextBox
+        {
+            AcceptsReturn            = true,
+            TextWrapping             = TextWrapping.Wrap,
+            PlaceholderText          = "예: R U R' U' F' B L2 D ...",
+            FontFamily               = new FontFamily("Courier New"),
+            FontSize                 = 11,
+            Width                    = SolutionPanelOverlay.TextBoxWidth,
+            Height                   = SolutionPanelOverlay.TextBoxHeight,
+            HorizontalAlignment      = HorizontalAlignment.Left,
+            VerticalAlignment        = VerticalAlignment.Bottom,
+            Margin                   = new Thickness(
+                                           SolutionPanelOverlay.TextBoxLeft, 0, 0,
+                                           SolutionPanelOverlay.TextBoxMarginBottom),
+            Background               = new SolidColorBrush(Color.FromArgb(160, 8, 14, 28)),
+            Foreground               = new SolidColorBrush(Color.FromArgb(255, 170, 225, 255)),
+            BorderBrush              = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),  // 그리기로 대체
+            BorderThickness          = new Thickness(0),
+            Padding                  = new Thickness(4, 3),
+            CaretBrush               = new SolidColorBrush(Colors.Cyan),
+            SelectionBrush           = new SolidColorBrush(Color.FromArgb(120, 0, 150, 255)),
+            MaxLines                 = 4,
+        };
+
+        var grid = new Grid();
+        grid.Children.Add(cubeView);
+        grid.Children.Add(_solutionBox);
+        Content = grid;
 
         KeyDown += OnKeyDown;
         KeyUp   += (_, e) => _input.OnKeyUp(e);
@@ -93,12 +132,70 @@ public partial class MainWindow : Window
         SaveCubeState();
     }
 
+    // ── RANDOM 섞기 ─────────────────────────────────────────────────────
+    private void StartScramble()
+    {
+        // 풀이 중이거나 이미 섞는 중이면 무시
+        if (_solver.IsRunning || _scrambleQueue is { Count: > 0 }) return;
+
+        // 기록·상태 초기화 후 새 섞기 시작
+        _solver.Reset();
+        _turn = null;
+
+        var queue = new Queue<(LayerAxis, int, bool)>();
+        LayerAxis lastAxis = (LayerAxis)99;
+        int       lastLayer = 99;
+
+        for (int i = 0; i < 20; i++)
+        {
+            LayerAxis axis;
+            int       layer;
+
+            // 같은 축+레이어 연속 방지 (바로 상쇄되는 수 제외)
+            do
+            {
+                axis  = Rng.Next(2) == 0 ? LayerAxis.X : LayerAxis.Y;
+                layer = Rng.Next(3) - 1;           // -1, 0, 1
+            } while (axis == lastAxis && layer == lastLayer);
+
+            var cw = Rng.Next(2) == 0;
+            queue.Enqueue((axis, layer, cw));
+            lastAxis  = axis;
+            lastLayer = layer;
+        }
+
+        _scrambleQueue = queue;
+    }
+
     // ── AI 풀기 ─────────────────────────────────────────────────────────
     private void AiSolve()
     {
-        // 기록 역재생: 이동 수 요약 / AI 직접: 큐브 6면 상태 문자열 전달
+        // 기록 역재생: 이동 수 요약 / AI SubAgent: 큐브 6면 상태 + 큐브 객체(검증용) 전달
         var cubeDesc = _solver.UseHistoryMode ? "" : FormatCubeState();
-        _solver.RequestSolve(cubeDesc);
+        _solver.RequestSolve(cubeDesc, _solver.UseHistoryMode ? null : _cube);
+    }
+
+    // ── 클립보드 복사 ────────────────────────────────────────────────────
+    internal void CopyToClipboard(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is not null)
+            _ = clipboard.SetValueAsync(DataFormat.Text, text);
+    }
+
+    // ── 솔루션 직접 입력 실행 ───────────────────────────────────────────
+    internal void ExecuteSolutionText()
+    {
+        var text = _solutionBox?.Text ?? "";
+        _solver.QueueFromNotation(text, _cube);
+    }
+
+    // ── 솔루션 입력 지우기 ──────────────────────────────────────────────
+    internal void ClearSolutionText()
+    {
+        if (_solutionBox != null) _solutionBox.Text = "";
+        _solver.SolutionStatus = "";
     }
 
     // ── 큐브 상태 → AI 전달용 문자열 ────────────────────────────────────
@@ -191,7 +288,10 @@ public partial class MainWindow : Window
             if (Overlay.HitCubeResetButton(pt))
                 { _w.ResetCube(); Consume(e); return; }
 
-            // AI 패널: AI버튼·중지버튼·체크박스
+            if (Overlay.HitScrambleButton(pt))
+                { _w.StartScramble(); Consume(e); return; }
+
+            // AI 패널 A: AI버튼·중지버튼·체크박스 / 패널 B: 복사버튼
             var aiHit = AiButtonOverlay.TryHit(pt, w, h);
             if (aiHit != AiButtonOverlay.Hit.None)
             {
@@ -203,6 +303,25 @@ public partial class MainWindow : Window
                         _w._solver.StopSolving(); break;
                     case AiButtonOverlay.Hit.Checkbox:
                         _w._solver.UseHistoryMode = !_w._solver.UseHistoryMode; break;
+                    case AiButtonOverlay.Hit.CopyRequest:
+                        _w.CopyToClipboard(_w._solver.LastRequest); break;
+                    case AiButtonOverlay.Hit.CopyResponse:
+                        _w.CopyToClipboard(_w._solver.LastResponse); break;
+                }
+                Consume(e);
+                return;
+            }
+
+            // 솔루션 직접 입력 패널: 실행·지우기 버튼
+            var solHit = SolutionPanelOverlay.TryHit(pt, h);
+            if (solHit != SolutionPanelOverlay.Hit.None)
+            {
+                switch (solHit)
+                {
+                    case SolutionPanelOverlay.Hit.Run:
+                        _w.ExecuteSolutionText(); break;
+                    case SolutionPanelOverlay.Hit.Clear:
+                        _w.ClearSolutionText(); break;
                 }
                 Consume(e);
                 return;
@@ -231,25 +350,42 @@ public partial class MainWindow : Window
             // 레이어 애니메이션 진행
             if (_w._turn is not null)
             {
-                _w._turn.Advance(0.042f);
+                // 섞는 중엔 3배 빠르게 (20번 × ~130ms ≈ 2.6초)
+                float speed = _w._scrambleQueue is { Count: > 0 } ? 0.13f : 0.042f;
+                _w._turn.Advance(speed);
+
                 if (_w._turn.IsComplete)
                 {
                     _w._cube.RotateLayer(_w._turn.Axis, _w._turn.Layer, _w._turn.Clockwise);
                     _w._turn = null;
                     _w.SaveCubeState();
 
-                    // 솔루션 큐에서 다음 이동 꺼내기
-                    if (_w._solver.TryDequeueNext(out var a, out var l, out var cw))
+                    // ── 스크램블 큐 우선 ──────────────────────────────────
+                    if (_w._scrambleQueue is { Count: > 0 })
+                    {
+                        var (sa, sl, scw) = _w._scrambleQueue.Dequeue();
+                        _w.RotateLayer(sa, sl, scw, recordMove: true);   // 기록 O
+                    }
+                    // ── 솔루션 큐 ─────────────────────────────────────────
+                    else if (_w._solver.TryDequeueNext(out var a, out var l, out var cw))
                         _w.RotateLayer(a, l, cw, recordMove: false);
                     else if (!_w._solver.HasPending && _w._solver.IsRunning)
                         _w._solver.NotifyComplete();
                 }
             }
-            // 솔루션 첫 이동 시작 (turn 없고 큐 있을 때)
-            else if (_w._solver.HasPending && _w._turn is null)
+            // 첫 이동 시작 (turn 없을 때)
+            else if (_w._turn is null)
             {
-                if (_w._solver.TryDequeueNext(out var a, out var l, out var cw))
-                    _w.RotateLayer(a, l, cw, recordMove: false);
+                if (_w._scrambleQueue is { Count: > 0 })
+                {
+                    var (sa, sl, scw) = _w._scrambleQueue.Dequeue();
+                    _w.RotateLayer(sa, sl, scw, recordMove: true);
+                }
+                else if (_w._solver.HasPending)
+                {
+                    if (_w._solver.TryDequeueNext(out var a, out var l, out var cw))
+                        _w.RotateLayer(a, l, cw, recordMove: false);
+                }
             }
         }
 

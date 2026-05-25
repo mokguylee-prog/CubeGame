@@ -43,6 +43,10 @@ Icon
 # Run artifacts
 .run/
 
+# Environment
+.env
+.env.*
+
 # OS artifacts
 Thumbs.db
 ehthumbs.db

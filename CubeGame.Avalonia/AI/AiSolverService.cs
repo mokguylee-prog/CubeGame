@@ -20,11 +20,15 @@ public static class AiSolverService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(12) };
 
+    // OpenRouter free 모델 목록 (순서대로 fallback)
+    // 모델 폐기/rate-limit 시 다음 모델로 자동 전환됩니다.
     private static readonly string[] FreeModels =
     [
-        "google/gemma-3-27b-it:free",
-        "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "mistralai/mistral-7b-instruct:free"
+        "deepseek/deepseek-v4-flash:free",
+        "openai/gpt-oss-20b:free",
+        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
     ];
 
     // ──────────────────────────────────────────────────────────────────
@@ -53,7 +57,77 @@ public static class AiSolverService
     }
 
     // ──────────────────────────────────────────────────────────────────
-    // AI 직접 풀이 모드: 큐브 상태 전체를 AI에 전달해 풀이 조언을 받음
+    // SubAgent 1: 큐브 상태 분석 (한국어 설명 반환)
+    // ──────────────────────────────────────────────────────────────────
+    public static async Task<AiResult> GetCubeAnalysisAsync(string cubeState, CancellationToken ct)
+    {
+        var prompt =
+            "You are a Rubik's cube expert. Analyze the following cube state and briefly describe " +
+            "in English what is out of place and what general strategy should be used to solve it. " +
+            "Be concise (2-3 sentences max).\n\n" +
+            "Cube state (W=White/top, Y=Yellow/bottom, G=Green/front, B=Blue/back, O=Orange/left, R=Red/right):\n" +
+            cubeState;
+
+        var apiKey = GetApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return new AiResult(prompt, "No API key — analysis skipped.");
+
+        try
+        {
+            var response = await CallAsync(apiKey, prompt, maxTokens: 150, ct);
+            return new AiResult(prompt, response);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new AiResult(prompt, $"Analysis failed: {ex.Message}");
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // SubAgent 2: 풀이 이동 수식 생성 (표준 표기법만 반환)
+    // analysis: Agent 1 결과를 컨텍스트로 제공해 정확도 향상
+    // ──────────────────────────────────────────────────────────────────
+    public static async Task<AiResult> GetSolvingMovesAsync(
+        string cubeState, string analysis, CancellationToken ct)
+    {
+        // 시스템 프롬프트: 표준 표기법만 출력하도록 강제
+        var systemPrompt =
+            "You are a Rubik's cube solver. Your ONLY task is to output the solution move sequence " +
+            "in standard Rubik's notation. Rules:\n" +
+            "- Valid tokens: U U' U2  D D' D2  R R' R2  L L' L2  F F' F2  B B' B2  M M' E E' S S'\n" +
+            "- Output ONLY the move tokens separated by spaces, nothing else\n" +
+            "- No explanations, no punctuation, no numbering\n" +
+            "- Example output: R U R' U' R' F R2 U' R' U' R U R' F'\n" +
+            "- Goal: return ALL six faces to a single uniform color";
+
+        var userPrompt =
+            $"Cube analysis: {analysis}\n\n" +
+            "Cube state (each face row-by-row, | separates rows):\n" +
+            cubeState + "\n\n" +
+            "Solution moves:";
+
+        var apiKey = GetApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return new AiResult(userPrompt,
+                "⚠️ API 키 없음. OPENROUTER_API_KEY 환경변수를 설정하세요.");
+
+        try
+        {
+            // 시스템+유저 메시지 두 개를 전달하는 별도 호출
+            var response = await CallWithSystemAsync(
+                apiKey, systemPrompt, userPrompt, maxTokens: 300, ct);
+            return new AiResult(userPrompt, response);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new AiResult(userPrompt, $"❌ AI 연결 실패: {ex.Message}");
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // (구) AI 직접 풀이 모드 — 단순 텍스트 조언 (호환용, 더 이상 기본 경로 아님)
     // ──────────────────────────────────────────────────────────────────
     public static async Task<AiResult> GetAiSolutionAsync(string cubeState, CancellationToken ct)
     {
@@ -87,30 +161,154 @@ public static class AiSolverService
     // ──────────────────────────────────────────────────────────────────
     // 내부 헬퍼
     // ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// FreeModels 목록을 순서대로 시도합니다.
+    /// 404(모델 없음)·429(rate-limit)이면 다음 모델로 fallback.
+    /// </summary>
     private static async Task<string> CallAsync(
         string apiKey, string prompt, int maxTokens, CancellationToken ct)
     {
-        var body = JsonSerializer.Serialize(new
+        string? lastError = null;
+
+        foreach (var model in FreeModels)
         {
-            model = FreeModels[0],
-            max_tokens = maxTokens,
-            messages = new[] { new { role = "user", content = prompt } }
-        });
+            ct.ThrowIfCancellationRequested();
 
-        var req = new HttpRequestMessage(
-            HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        req.Headers.Add("HTTP-Referer", "https://github.com/cubegame");
-        req.Content = new StringContent(body, Encoding.UTF8, "application/json");
+            var body = JsonSerializer.Serialize(new
+            {
+                model,
+                max_tokens = maxTokens,
+                messages = new[] { new { role = "user", content = prompt } }
+            });
 
-        var resp = await Http.SendAsync(req, ct);
-        var json = await resp.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-        return doc.RootElement
-            .GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString()?.Trim() ?? "(응답 없음)";
+            var req = new HttpRequestMessage(
+                HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Headers.Add("HTTP-Referer", "https://github.com/cubegame");
+            req.Content = new StringContent(body, Encoding.UTF8, "application/json");
+
+            HttpResponseMessage resp;
+            string json;
+            try
+            {
+                resp = await Http.SendAsync(req, ct);
+                json = await resp.Content.ReadAsStringAsync(ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                lastError = $"❌ 네트워크 오류: {ex.Message}";
+                continue;   // 다음 모델 시도
+            }
+
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // API 오류 응답 처리 ({"error": {...}} 형태)
+            if (root.TryGetProperty("error", out var errEl))
+            {
+                var msg  = errEl.TryGetProperty("message", out var m) ? m.GetString() : null;
+                int code = 0;
+                if (errEl.TryGetProperty("code", out var c))
+                    code = c.ValueKind == JsonValueKind.Number ? c.GetInt32()
+                         : int.TryParse(c.GetString(), out var n) ? n : 0;
+
+                // 404: 모델 없음 / 429: rate-limit → 다음 모델로
+                if (code == 404 || code == 429)
+                {
+                    lastError = $"⚠️ [{model}] {code}: {msg}";
+                    continue;
+                }
+
+                // 그 외 오류는 즉시 반환
+                return $"❌ API 오류 [{code}]: {msg ?? "알 수 없는 오류"}";
+            }
+
+            // 정상 응답에서 content 추출
+            if (!root.TryGetProperty("choices", out var choices) ||
+                choices.GetArrayLength() == 0)
+            {
+                lastError = $"⚠️ 응답 형식 오류\n{json[..Math.Min(json.Length, 80)]}";
+                continue;
+            }
+
+            return choices[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString()?.Trim() ?? "(응답 없음)";
+        }
+
+        // 모든 모델 실패
+        return lastError ?? "❌ 사용 가능한 AI 모델이 없습니다. 잠시 후 다시 시도해주세요.";
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // system + user 두 메시지를 전달하는 호출 (SubAgent 2용)
+    // ──────────────────────────────────────────────────────────────────
+    private static async Task<string> CallWithSystemAsync(
+        string apiKey, string systemContent, string userContent,
+        int maxTokens, CancellationToken ct)
+    {
+        string? lastError = null;
+
+        foreach (var model in FreeModels)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var body = JsonSerializer.Serialize(new
+            {
+                model,
+                max_tokens = maxTokens,
+                messages = new object[]
+                {
+                    new { role = "system", content = systemContent },
+                    new { role = "user",   content = userContent   }
+                }
+            });
+
+            var req = new HttpRequestMessage(
+                HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Headers.Add("HTTP-Referer", "https://github.com/cubegame");
+            req.Content = new StringContent(body, Encoding.UTF8, "application/json");
+
+            HttpResponseMessage resp;
+            string json;
+            try
+            {
+                resp = await Http.SendAsync(req, ct);
+                json = await resp.Content.ReadAsStringAsync(ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { lastError = $"❌ 네트워크 오류: {ex.Message}"; continue; }
+
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out var errEl))
+            {
+                var msg  = errEl.TryGetProperty("message", out var m) ? m.GetString() : null;
+                int code = 0;
+                if (errEl.TryGetProperty("code", out var c))
+                    code = c.ValueKind == JsonValueKind.Number ? c.GetInt32()
+                         : int.TryParse(c.GetString(), out var n) ? n : 0;
+
+                if (code == 404 || code == 429) { lastError = $"⚠️ [{model}] {code}"; continue; }
+                return $"❌ API 오류 [{code}]: {msg ?? "알 수 없는 오류"}";
+            }
+
+            if (!root.TryGetProperty("choices", out var choices) ||
+                choices.GetArrayLength() == 0)
+            { lastError = "⚠️ 응답 형식 오류"; continue; }
+
+            return choices[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString()?.Trim() ?? "";
+        }
+
+        return lastError ?? "❌ 사용 가능한 AI 모델이 없습니다.";
     }
 
     private static string? GetApiKey()

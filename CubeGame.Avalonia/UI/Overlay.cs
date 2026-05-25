@@ -26,8 +26,8 @@ public class Overlay
         DrawActionButtons(dc, state);
         DrawFrontFace(dc, w, h, frontFace);
 
-        // AI 버튼·상태는 AI 전용 모듈에 위임
-        AiButtonOverlay.Draw(dc, w, h, solver.IsRunning, solver.StatusMessage);
+        // AI 패널(버튼·중지·체크박스·로그)은 AI 전용 모듈에 위임
+        AiButtonOverlay.Draw(dc, w, h, solver);
 
         if (ShowHelp) DrawHelp(dc, w, h);
         if (!string.IsNullOrEmpty(state.LastResult))
@@ -47,10 +47,7 @@ public class Overlay
     public static bool HitSelectButton(Point point)    => SelectButtonRect.Contains(point);
     public static bool HitRotationButton(Point point)  => RotationButtonRect.Contains(point);
     public static bool HitCubeResetButton(Point point) => CubeResetButtonRect.Contains(point);
-
-    // AI 버튼 히트테스트도 AiButtonOverlay에 위임
-    public static bool HitAiButton(Point point, int w, int h)
-        => AiButtonOverlay.HitTest(point, w, h);
+    // AI 패널 히트테스트는 MainWindow에서 AiButtonOverlay.TryHit()으로 직접 처리
 
     public static bool TryHitLayerButton(Point point, out LayerAxis axis, out int layer)
     {

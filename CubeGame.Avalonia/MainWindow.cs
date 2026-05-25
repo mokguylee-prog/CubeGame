@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -94,7 +95,60 @@ public partial class MainWindow : Window
 
     // ── AI 풀기 ─────────────────────────────────────────────────────────
     private void AiSolve()
-        => _solver.RequestSolve(msg => { /* 상태 메시지는 solver가 직접 보관 */ });
+    {
+        // 기록 역재생: 이동 수 요약 / AI 직접: 큐브 6면 상태 문자열 전달
+        var cubeDesc = _solver.UseHistoryMode ? "" : FormatCubeState();
+        _solver.RequestSolve(cubeDesc);
+    }
+
+    // ── 큐브 상태 → AI 전달용 문자열 ────────────────────────────────────
+    private string FormatCubeState()
+    {
+        static char C(Cubie cubie, FaceDir dir)
+        {
+            var c = cubie.FaceColors[(int)dir];
+            if (c.A == 0)                             return '.';
+            if (c.R > 200 && c.G > 200 && c.B > 200) return 'W'; // 흰
+            if (c.R > 200 && c.G > 180 && c.B <  20) return 'Y'; // 노
+            if (c.R > 200 && c.G > 100 && c.B <  20) return 'O'; // 주
+            if (c.R > 150 && c.G <  100 && c.B < 100) return 'R'; // 빨
+            if (c.G > 150 && c.R < 100)               return 'G'; // 초
+            if (c.B > 180 && c.R < 100)               return 'B'; // 파
+            return '?';
+        }
+
+        string Face((int x, int y, int z, FaceDir d)[] s)
+        {
+            var ch = new char[9];
+            for (int i = 0; i < 9; i++) ch[i] = C(_cube[s[i].x, s[i].y, s[i].z], s[i].d);
+            return $"{ch[0]}{ch[1]}{ch[2]}|{ch[3]}{ch[4]}{ch[5]}|{ch[6]}{ch[7]}{ch[8]}";
+        }
+
+        var u = Face([(-1,1, 1,FaceDir.Up),  (0,1, 1,FaceDir.Up),  (1,1, 1,FaceDir.Up),
+                      (-1,1, 0,FaceDir.Up),  (0,1, 0,FaceDir.Up),  (1,1, 0,FaceDir.Up),
+                      (-1,1,-1,FaceDir.Up),  (0,1,-1,FaceDir.Up),  (1,1,-1,FaceDir.Up)]);
+        var d = Face([(-1,-1,-1,FaceDir.Down),(0,-1,-1,FaceDir.Down),(1,-1,-1,FaceDir.Down),
+                      (-1,-1, 0,FaceDir.Down),(0,-1, 0,FaceDir.Down),(1,-1, 0,FaceDir.Down),
+                      (-1,-1, 1,FaceDir.Down),(0,-1, 1,FaceDir.Down),(1,-1, 1,FaceDir.Down)]);
+        var f = Face([(-1, 1,-1,FaceDir.Front),(0, 1,-1,FaceDir.Front),(1, 1,-1,FaceDir.Front),
+                      (-1, 0,-1,FaceDir.Front),(0, 0,-1,FaceDir.Front),(1, 0,-1,FaceDir.Front),
+                      (-1,-1,-1,FaceDir.Front),(0,-1,-1,FaceDir.Front),(1,-1,-1,FaceDir.Front)]);
+        var b = Face([ (1, 1,1,FaceDir.Back), (0, 1,1,FaceDir.Back),(-1, 1,1,FaceDir.Back),
+                       (1, 0,1,FaceDir.Back), (0, 0,1,FaceDir.Back),(-1, 0,1,FaceDir.Back),
+                       (1,-1,1,FaceDir.Back), (0,-1,1,FaceDir.Back),(-1,-1,1,FaceDir.Back)]);
+        var l = Face([(-1, 1, 1,FaceDir.Left),(-1, 1, 0,FaceDir.Left),(-1, 1,-1,FaceDir.Left),
+                      (-1, 0, 1,FaceDir.Left),(-1, 0, 0,FaceDir.Left),(-1, 0,-1,FaceDir.Left),
+                      (-1,-1, 1,FaceDir.Left),(-1,-1, 0,FaceDir.Left),(-1,-1,-1,FaceDir.Left)]);
+        var r = Face([ (1, 1,-1,FaceDir.Right),(1, 1, 0,FaceDir.Right),(1, 1, 1,FaceDir.Right),
+                       (1, 0,-1,FaceDir.Right),(1, 0, 0,FaceDir.Right),(1, 0, 1,FaceDir.Right),
+                       (1,-1,-1,FaceDir.Right),(1,-1, 0,FaceDir.Right),(1,-1, 1,FaceDir.Right)]);
+
+        return new StringBuilder()
+            .AppendLine($"U(상): {u}").AppendLine($"D(하): {d}")
+            .AppendLine($"F(앞): {f}").AppendLine($"B(뒤): {b}")
+            .AppendLine($"L(좌): {l}").Append    ($"R(우): {r}")
+            .ToString();
+    }
 
     // ── 저장 ────────────────────────────────────────────────────────────
     private void SaveCubeState() => CubeStateStore.Save(_cube, _renderer);
@@ -137,8 +191,22 @@ public partial class MainWindow : Window
             if (Overlay.HitCubeResetButton(pt))
                 { _w.ResetCube(); Consume(e); return; }
 
-            if (Overlay.HitAiButton(pt, w, h))
-                { _w.AiSolve(); Consume(e); return; }
+            // AI 패널: AI버튼·중지버튼·체크박스
+            var aiHit = AiButtonOverlay.TryHit(pt, w, h);
+            if (aiHit != AiButtonOverlay.Hit.None)
+            {
+                switch (aiHit)
+                {
+                    case AiButtonOverlay.Hit.AiButton:
+                        _w.AiSolve(); break;
+                    case AiButtonOverlay.Hit.StopButton:
+                        _w._solver.StopSolving(); break;
+                    case AiButtonOverlay.Hit.Checkbox:
+                        _w._solver.UseHistoryMode = !_w._solver.UseHistoryMode; break;
+                }
+                Consume(e);
+                return;
+            }
 
             if (Overlay.TryHitLayerButton(pt, out var axis, out var layer))
                 { _w.RotateViewLayer(axis, layer, true); Consume(e); }
@@ -174,7 +242,7 @@ public partial class MainWindow : Window
                     if (_w._solver.TryDequeueNext(out var a, out var l, out var cw))
                         _w.RotateLayer(a, l, cw, recordMove: false);
                     else if (!_w._solver.HasPending && _w._solver.IsRunning)
-                        _w._solver.NotifyComplete(_ => { }); // 완료 처리
+                        _w._solver.NotifyComplete();
                 }
             }
             // 솔루션 첫 이동 시작 (turn 없고 큐 있을 때)

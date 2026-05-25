@@ -180,8 +180,12 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(text)) return;
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard is not null)
-            _ = clipboard.SetValueAsync(DataFormat.Text, text);
+        if (clipboard is null) return;
+        Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            try   { await clipboard.SetTextAsync(text); }
+            catch { /* clipboard 실패는 무시 */ }
+        });
     }
 
     // ── 솔루션 직접 입력 실행 ───────────────────────────────────────────
@@ -304,9 +308,11 @@ public partial class MainWindow : Window
                     case AiButtonOverlay.Hit.Checkbox:
                         _w._solver.UseHistoryMode = !_w._solver.UseHistoryMode; break;
                     case AiButtonOverlay.Hit.CopyRequest:
-                        _w.CopyToClipboard(_w._solver.LastRequest); break;
+                        _w.CopyToClipboard(_w._solver.LastRequest);
+                        _w._solver.NotifyCopied(SolveController.CopiedKind.Request); break;
                     case AiButtonOverlay.Hit.CopyResponse:
-                        _w.CopyToClipboard(_w._solver.LastResponse); break;
+                        _w.CopyToClipboard(_w._solver.LastResponse);
+                        _w._solver.NotifyCopied(SolveController.CopiedKind.Response); break;
                 }
                 Consume(e);
                 return;

@@ -58,9 +58,11 @@ public static class SolutionPanelOverlay
             new Pen(new SolidColorBrush(Color.FromArgb(180, 60, 190, 80)), 1.5),
             p, 10, 10);
 
-        // 제목
+        // 제목 + 표기법 레이블
         DrawSmallText(dc, "🔧 솔루션 직접 입력", p.X + 8, p.Y + 7,
             Color.FromArgb(230, 110, 230, 110), 12f, bold: true);
+        DrawSmallText(dc, "싱마스터 표기법", p.Right - 8 - 80, p.Y + 8,
+            Color.FromArgb(160, 140, 200, 255), 9.5f);
 
         // TextBox 구역 배경 힌트 (실제 TextBox는 네이티브 컨트롤)
         var tbRect = new Rect(p.X + 8, p.Y + 23, p.Width - 16, TextBoxHeight);

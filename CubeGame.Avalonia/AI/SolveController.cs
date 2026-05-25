@@ -64,6 +64,29 @@ public class SolveController
     /// 솔루션 직접 입력 패널 상태 메시지
     public string SolutionStatus { get; set; } = "";
 
+    // ── 복사 피드백 토스트 ────────────────────────────────────────────
+    public enum CopiedKind { None, Request, Response }
+    public CopiedKind LastCopied    { get; private set; } = CopiedKind.None;
+    public DateTime   LastCopiedAt  { get; private set; } = DateTime.MinValue;
+    private const double ToastSec   = 1.5;
+
+    public void NotifyCopied(CopiedKind kind)
+    {
+        LastCopied   = kind;
+        LastCopiedAt = DateTime.UtcNow;
+    }
+
+    /// 토스트가 아직 표시 중이면 [0.0, 1.0] 불투명도, 아니면 0
+    public double CopyToastAlpha(CopiedKind kind)
+    {
+        if (LastCopied != kind) return 0;
+        var elapsed = (DateTime.UtcNow - LastCopiedAt).TotalSeconds;
+        if (elapsed >= ToastSec) return 0;
+        // 마지막 0.4초 동안 fade-out
+        var fade = ToastSec - 0.4;
+        return elapsed < fade ? 1.0 : 1.0 - (elapsed - fade) / 0.4;
+    }
+
     // ────────────────────────────────────────────────────────────────
     // 수동 이동 기록
     // ────────────────────────────────────────────────────────────────

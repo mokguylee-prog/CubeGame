@@ -222,7 +222,8 @@ public static class AiButtonOverlay
         // ── 📤 요청 (3줄) + 복사 버튼 ──────────────────────────────
         DrawSmallText(dc, "📤 요청:", p.X + 8, p.Y + 8,
             Color.FromArgb(220, 120, 190, 255), 11f, bold: true);
-        DrawCopyBtn(dc, CopyReqBtn(w, h), !string.IsNullOrEmpty(solver.LastRequest));
+        DrawCopyBtn(dc, CopyReqBtn(w, h), !string.IsNullOrEmpty(solver.LastRequest),
+            solver.CopyToastAlpha(SolveController.CopiedKind.Request));
         DrawLogLines(dc, p, solver.LastRequest, relY: 24, maxLines: 3);
 
         DrawDivider(dc, p, relY: 68);
@@ -230,27 +231,42 @@ public static class AiButtonOverlay
         // ── 📥 응답 (6줄) + 복사 버튼 ──────────────────────────────
         DrawSmallText(dc, "📥 응답:", p.X + 8, p.Y + 74,
             Color.FromArgb(220, 120, 190, 255), 11f, bold: true);
-        DrawCopyBtn(dc, CopyRespBtn(w, h), !string.IsNullOrEmpty(solver.LastResponse));
+        DrawCopyBtn(dc, CopyRespBtn(w, h), !string.IsNullOrEmpty(solver.LastResponse),
+            solver.CopyToastAlpha(SolveController.CopiedKind.Response));
         DrawLogLines(dc, p, solver.LastResponse, relY: 90, maxLines: 6);
     }
 
-    // ── 📋 복사 버튼 ────────────────────────────────────────────────
-    private static void DrawCopyBtn(DrawingContext dc, Rect r, bool hasContent)
+    // ── 📋 복사 버튼 + 토스트 ────────────────────────────────────────
+    private static void DrawCopyBtn(
+        DrawingContext dc, Rect r, bool hasContent,
+        double toastAlpha = 0)
     {
-        // 내용이 없으면 흐리게, 있으면 밝게
+        bool toasting = toastAlpha > 0;
+
         var fillAlpha   = (byte)(hasContent ? 140 : 50);
         var borderAlpha = (byte)(hasContent ? 180 : 70);
         var textAlpha   = (byte)(hasContent ? 230 : 100);
 
+        var fillColor   = toasting
+            ? Color.FromArgb((byte)(toastAlpha * 160), 20, 130, 60)
+            : Color.FromArgb(fillAlpha, 40, 80, 140);
+        var borderColor = toasting
+            ? Color.FromArgb((byte)(toastAlpha * 220), 60, 220, 100)
+            : Color.FromArgb(borderAlpha, 100, 160, 240);
+        var label       = toasting ? "✅ 복사됨!" : "📋 복사";
+        var labelColor  = toasting
+            ? Color.FromArgb((byte)(toastAlpha * 255), 140, 255, 160)
+            : Color.FromArgb(textAlpha, 180, 220, 255);
+
         dc.DrawRectangle(
-            new SolidColorBrush(Color.FromArgb(fillAlpha, 40, 80, 140)),
-            new Pen(new SolidColorBrush(Color.FromArgb(borderAlpha, 100, 160, 240)), 1),
+            new SolidColorBrush(fillColor),
+            new Pen(new SolidColorBrush(borderColor), toasting ? 1.5 : 1.0),
             r, 4, 4);
 
-        var ft = new FormattedText("📋 복사", CultureInfo.CurrentCulture,
+        var ft = new FormattedText(label, CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
             new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Normal),
-            9, new SolidColorBrush(Color.FromArgb(textAlpha, 180, 220, 255)));
+            9, new SolidColorBrush(labelColor));
         dc.DrawText(ft, new Point(
             r.X + (r.Width  - ft.Width)  / 2,
             r.Y + (r.Height - ft.Height) / 2));

@@ -1,0 +1,49 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.DotSettings
+*.csproj.user
+*.dbmdl
+*.jfm
+
+# Build
+[Ll]og/
+[Rr]elease/
+[Dd]ebug/
+
+# NuGet
+packages/
+*.nupkg
+**/[Pp]ackages/*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# IDE
+.vs/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Run artifacts
+.run/
+
+# OS artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini

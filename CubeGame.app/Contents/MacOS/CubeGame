@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+mkdir -p "/Volumes/MACD/AI_Work1/CubeGame/.run"
+exec > "/Volumes/MACD/AI_Work1/CubeGame/.run/CubeGame.log" 2>&1
+export DOTNET_ROOT="/usr/local/Cellar/dotnet@9/9.0.117/libexec"
+export PATH="/usr/local/Cellar/dotnet@9/9.0.117/libexec:$PATH"
+cd "/Volumes/MACD/AI_Work1/CubeGame/CubeGame.Avalonia/bin/Debug/net9.0/"
+exec "/Volumes/MACD/AI_Work1/CubeGame/CubeGame.Avalonia/bin/Debug/net9.0//CubeGame.Avalonia"

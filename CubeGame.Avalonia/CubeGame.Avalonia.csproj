@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- 앱 아이콘 -->
+    <AppIcon>Assets/icon.icns</AppIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,4 +19,23 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+
+  <!-- 아이콘을 빌드 출력에 포함 -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/icon.png" />
+  </ItemGroup>
+
+  <!-- 빌드 후: 루트에 CubeGame.app 번들 생성/갱신 (macOS) -->
+  <Target Name="CreateAppBundle" AfterTargets="Build"
+          Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <PropertyGroup>
+      <_RootDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/..'))</_RootDir>
+      <_OutDir>$([System.IO.Path]::GetFullPath('$(OutputPath)'))</_OutDir>
+      <_AppDir>$(_RootDir)/CubeGame.app</_AppDir>
+      <_Icns>$(MSBuildProjectDirectory)/Assets/icon.icns</_Icns>
+    </PropertyGroup>
+
+    <Exec Command="bash &quot;$(MSBuildProjectDirectory)/build-app-bundle.sh&quot; &quot;$(_AppDir)&quot; &quot;$(_OutDir)&quot; &quot;$(_Icns)&quot; &quot;$(_RootDir)&quot;" />
+    <Message Text="▶ CubeGame.app 생성됨: $(_AppDir)" Importance="high" />
+  </Target>
 </Project>

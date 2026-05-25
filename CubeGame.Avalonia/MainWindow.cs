@@ -7,6 +7,8 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using CubeGame.Avalonia.AI;
 using CubeGame.Avalonia.Game;
@@ -39,6 +41,15 @@ public partial class MainWindow : Window
         MinWidth = 700; MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = null;
+
+        // 창 아이콘 설정
+        try
+        {
+            var uri = new Uri("avares://CubeGame.Avalonia/Assets/icon.png");
+            using var stream = AssetLoader.Open(uri);
+            Icon = new WindowIcon(new Bitmap(stream));
+        }
+        catch { /* 아이콘 로드 실패 시 무시 */ }
 
         CubeStateStore.Load(_cube, _renderer);
 
